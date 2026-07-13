@@ -32,13 +32,13 @@ st.sidebar.warning(
 def load_data():
     csv_path = "data.csv"
     if os.path.exists(csv_path):
-        # 한글 깨짐 방지를 위해 encoding 설정
-        try:
-            return pd.read_csv(csv_path, encoding='utf-8')
-        except UnicodeDecodeError:
-            return pd.read_csv(csv_path, encoding='cp949')
-    else:
-        return None
+        # 다양한 인코딩 형식을 시도하여 한글 깨짐 방지
+        for enc in ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']:
+            try:
+                return pd.read_csv(csv_path, encoding=enc)
+            except (UnicodeDecodeError, Exception):
+                continue
+    return None
 
 df = load_data()
 
@@ -65,7 +65,12 @@ def check_crisis(text):
 # ---------------------------------------------------------
 def get_custom_response(user_text, selected_persona, target_emotion=None):
     if df is None:
-        return "현재 data.csv 파일이 연결되지 않았습니다. 폴더에 data.csv 파일을 추가해 주세요!"
+        return "⚠️ 현재 `data.csv` 파일을 찾을 수 없습니다. 깃허브에 `data.csv` 파일을 업로드했는지 확인해 주세요!"
+    
+    # 필수 열이 없는 경우 안내
+    required_cols = ['generation', 'emotion', 'response']
+    if not all(col in df.columns for col in required_cols):
+        return "⚠️ `data.csv` 파일의 열 이름(generation, emotion, response)을 확인해 주세요."
     
     # 1. 선택한 세대에 해당하는 데이터 필터링
     filtered_df = df[df['generation'] == selected_persona]
@@ -76,18 +81,19 @@ def get_custom_response(user_text, selected_persona, target_emotion=None):
     if target_emotion:
         emotion_match = filtered_df[filtered_df['emotion'] == target_emotion]
         if not emotion_match.empty:
-            return random.choice(emotion_match['response'].tolist())
+            return random.choice(emotion_match['response'].dropna().tolist())
 
     # 3. 직접 입력 시 키워드 매칭 검색
-    for index, row in filtered_df.iterrows():
-        keywords = str(row.get('question_keyword', '')).split(',')
-        for kw in keywords:
-            kw = kw.strip()
-            if kw and kw in user_text:
-                return row['response']
+    if 'question_keyword' in filtered_df.columns:
+        for index, row in filtered_df.iterrows():
+            keywords = str(row.get('question_keyword', '')).split(',')
+            for kw in keywords:
+                kw = kw.strip()
+                if kw and kw in user_text:
+                    return row['response']
                 
     # 4. 일치하는 키워드가 없을 때 기본 답변
-    default_responses = filtered_df['response'].tolist()
+    default_responses = filtered_df['response'].dropna().tolist()
     if default_responses:
         return random.choice(default_responses)
     else:
@@ -148,9 +154,4 @@ if user_input := st.chat_input("메시지를 입력하세요..."):
             "📞 **청소년 전화:** 1388 (24시간 상담)"
         )
 
-    # 데이터셋에서 답변 가져오기
-    bot_reply = get_custom_response(user_input, persona)
-    
-    with st.chat_message("assistant"):
-        st.write(bot_reply)
-    st.session_state.messages.append({"role": "assistant", "content": bot_reply})
+    #
