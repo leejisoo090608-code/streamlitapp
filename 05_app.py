@@ -7,9 +7,12 @@ import os
 st.set_page_config(page_title="마음 기대기 ☁️", page_icon="☁️", layout="centered")
 
 # ---------------------------------------------------------
-# [사이드바] 세대 선택 & 안전 가이드
+# [사이드바] 파일 업로드, 세대 선택 & 안전 가이드
 # ---------------------------------------------------------
-st.sidebar.title("⚙️ 설정 및 안전 안내")
+st.sidebar.title("⚙️ 설정 및 데이터 관리")
+
+# 📂 1. CSV 파일 업로드 기능 추가
+uploaded_file = st.sidebar.file_uploader("📂 상담 데이터(CSV) 업로드", type=["csv"])
 
 persona = st.sidebar.selectbox(
     "상담사 말투 선택:",
@@ -26,21 +29,31 @@ st.sidebar.warning(
 )
 
 # ---------------------------------------------------------
-# [데이터 로드] CSV 파일 읽어오기
+# [데이터 로드] 업로드된 파일 우선 사용 -> 없으면기존 data.csv 검색
 # ---------------------------------------------------------
 @st.cache_data
-def load_data():
-    csv_path = "data.csv"
-    if os.path.exists(csv_path):
-        # 다양한 인코딩 형식을 시도하여 한글 깨짐 방지
+def load_data(file_source):
+    if file_source is not None:
         for enc in ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']:
             try:
-                return pd.read_csv(csv_path, encoding=enc)
+                # 업로드된 파일 객체이거나 파일 경로일 때 분기 처리
+                if isinstance(file_source, str):
+                    return pd.read_csv(file_source, encoding=enc)
+                else:
+                    file_source.seek(0)
+                    return pd.read_csv(file_source, encoding=enc)
             except (UnicodeDecodeError, Exception):
                 continue
     return None
 
-df = load_data()
+# 업로드한 파일이 있으면 그것을 쓰고, 없으면 로컬/깃허브의 data.csv를 찾음
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
+    st.sidebar.success("✅ CSV 데이터가 업로드되었습니다!")
+elif os.path.exists("data.csv"):
+    df = load_data("data.csv")
+else:
+    df = None
 
 # 세션 상태 초기화
 if "messages" not in st.session_state:
@@ -65,12 +78,12 @@ def check_crisis(text):
 # ---------------------------------------------------------
 def get_custom_response(user_text, selected_persona, target_emotion=None):
     if df is None:
-        return "⚠️ 현재 `data.csv` 파일을 찾을 수 없습니다. 깃허브에 `data.csv` 파일을 업로드했는지 확인해 주세요!"
+        return "⚠️ 데이터가 연결되지 않았습니다. 왼쪽 사이드바에서 CSV 파일을 업로드해 주세요!"
     
-    # 필수 열이 없는 경우 안내
+    # 필수 열 확인
     required_cols = ['generation', 'emotion', 'response']
     if not all(col in df.columns for col in required_cols):
-        return "⚠️ `data.csv` 파일의 열 이름(generation, emotion, response)을 확인해 주세요."
+        return "⚠️ CSV 파일의 열 이름(generation, emotion, response)을 확인해 주세요."
     
     # 1. 선택한 세대에 해당하는 데이터 필터링
     filtered_df = df[df['generation'] == selected_persona]
@@ -154,4 +167,9 @@ if user_input := st.chat_input("메시지를 입력하세요..."):
             "📞 **청소년 전화:** 1388 (24시간 상담)"
         )
 
-    #
+    # 데이터셋에서 답변 가져오기
+    bot_reply = get_custom_response(user_input, persona)
+    
+    with st.chat_message("assistant"):
+        st.write(bot_reply)
+    st.session_state.messages.append({"role": "assistant", "content": bot_reply})
