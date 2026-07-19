@@ -1,0 +1,192 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+
+# --- 페이지 설정 ---
+st.set_page_config(
+    page_title="서울 부동산 성향 맞춤형 분석 서비스",
+    page_icon="🏢",
+    layout="wide"
+)
+
+# --- 1. 가상 데이터 생성 (서울 주요 지역 예시) ---
+@st.cache_data
+def load_data():
+    districts = ["강남구", "서초구", "송파구", "마포구", "용산구", "성동구", "영등포구", "종로구", "강동구", "노원구"]
+    
+    # 기본 인프라 점수 및 분석 데이터 (10점 만점 기준)
+    data = {
+        "지역": districts,
+        "안정성": [9.5, 9.3, 8.8, 8.2, 8.5, 8.3, 8.0, 8.7, 8.1, 7.5],
+        "교육": [9.9, 9.5, 9.0, 8.0, 7.8, 7.9, 7.5, 8.2, 8.4, 8.8],
+        "교통": [9.6, 9.4, 8.9, 9.2, 9.0, 9.1, 9.3, 8.8, 7.9, 8.2],
+        "편의시설": [9.8, 9.6, 9.3, 8.9, 8.4, 8.7, 8.8, 8.5, 8.0, 7.6],
+        # 분석 요인
+        "인구증가율": ["유지(선호도 높음)", "유지", "상승(헬리오시티 등)", "상승", "유지", "상승(젊은층 유입)", "상승", "감소(오피스화)", "상승", "감소"],
+        "교통접근성": ["지하철 2,3,7,9호선, 신분당선 최상", "지하철 2,3,7,9호선, 고속터미널", "지하철 2,8,9호선 사통팔달", "지하철 2,5,6호선, 공항철도", "서울 중심부, KTX 용산역", "지하철 2,5호선, 경의중앙선", "지하철 1,2,5,9호선 교통 요충지", "지하철 1,3,5호선 중심 업무지구", "지하철 5,8호선 확장", "지하철 4,7호선 동북권 중심"],
+        "생활인프라": ["코엑스, 현대백화점, 대형병원", "신세계백화점, 성모병원", "롯데월드타워, 아산병원", "홍대·신촌 상권, 한강공원", "이태원, 용산가족공원", "성수동 핫플레이스, 서울숲", "타임스퀘어, 여의도 IFC몰", "광화문 문화시설, 전통 상권", "천호역 상권, 강동경희대병원", "백화점, 을지대병원"],
+        "신규개발계획": ["영동대로 복합개발, GBC", "경부고속도로 지하화", "잠실 MICE 사업", "당인리 문화공간 조성", "용산국제업무지구, 정비창", "성수 레미콘부지 개발", "여의도 재건축, 노량진 개발", "세운상가 재개발", "고덕비즈밸리, 둔촌 재건축 효과", "창동·노원 신경제중심지"],
+        "일자리접근성": ["GBD 직주근접 최상", "GBD 및 법조타운 직주근접", "GBD 및 문정법조단지 접근 용이", "여의도(YBD) 및 시청(CBD) 접근 용이", "CBD 및 YBD 이동 편리", "GBD 및 CBD 이동 편리", "YBD 여의도 금융업무지구 자체 포함", "CBD 도심 업무지구 자체 포함", "GBD 출퇴근 가능, 자체 일자리 증가", "CBD 및 GBD 이동 시간 소요"],
+        # 가격 데이터 (단위: 억원)
+        "평균매매가": [24.5, 23.0, 19.8, 14.2, 16.5, 15.0, 13.5, 12.0, 11.5, 8.0],
+        "평균전세가": [13.0, 12.2, 10.5, 8.0, 9.0, 8.5, 7.5, 6.8, 6.5, 4.8]
+    }
+    return pd.DataFrame(data)
+
+df = load_data()
+
+# --- 2. 사이드바: 사용자 심리/성향 분석 및 가중치 설정 ---
+st.sidebar.title("🎯 나의 부동산 성향 찾기")
+st.sidebar.write("개인의 라이프스타일에 맞춘 점수를 계산합니다.")
+
+# 유저 성향 선택 (라디오 버튼)
+user_style = st.sidebar.radio(
+    "가장 중요하게 생각하는 요소는 무엇인가요?",
+    [
+        "💼 직주근접! 출퇴근이 가장 중요해 (교통 중시)",
+        "👶 아이 교육과 안전이 최우선이야 (교육 & 안정성 중시)",
+        "🛒 집 주변에 백화점, 병원, 핫플이 있어야지 (편의시설 중시)",
+        "⚖️ 모든 요소가 골고루 균형 잡힌 게 좋아 (균형 중시)"
+    ]
+)
+
+# 성향에 따른 가중치 부여 (합계가 1이 되도록 설정)
+if "출퇴근" in user_style:
+    weights = {"안정성": 0.1, "교육": 0.1, "교통": 0.6, "편의시설": 0.2}
+elif "교육" in user_style:
+    weights = {"안정성": 0.4, "교육": 0.4, "교통": 0.1, "편의시설": 0.1}
+elif "편의시설" in user_style:
+    weights = {"안정성": 0.1, "교육": 0.1, "교통": 0.2, "편의시설": 0.6}
+else:
+    weights = {"안정성": 0.25, "교육": 0.25, "교통": 0.25, "편의시설": 0.25}
+
+# 맞춤형 점수 계산 (10점 만점 기준)
+df["맞춤점수"] = (
+    df["안정성"] * weights["안정성"] +
+    df["교육"] * weights["교육"] +
+    df["교통"] * weights["교통"] +
+    df["편의시설"] * weights["편의시설"]
+).round(2)
+
+# --- 3. 메인 화면 구성 ---
+st.title("🏢 서울시 지역별 맞춤형 부동산 분석 웹앱")
+st.write("사용자의 라이프스타일 성향을 심리적으로 분석하여 서울의 최적 지역을 추천하고 상세 분석을 제공합니다.")
+
+st.markdown("---")
+
+# --- 4. 사용자 맞춤형 추천 결과 ---
+st.subheader("🌟 나의 성향 기반 맞춤 추천 지역 TOP 3")
+top_3 = df.sort_values(by="맞춤점수", ascending=False).head(3)
+
+cols = st.columns(3)
+for i, row in enumerate(top_3.itertuples()):
+    with cols[i]:
+        st.metric(label=f"{i+1}순위 추천: {row.지역}", value=f"{row.맞춤점수} 점 / 10점")
+        st.caption(f"매매: {row.평균매매가}억 | 전세: {row.평균전세가}억")
+
+st.markdown("---")
+
+# --- 5. 지도 및 지역 선택 ---
+st.subheader("📍 분석할 서울 지역 선택")
+
+# 실제 위경도 데이터 매핑 (시각화용)
+geo_data = {
+    "강남구": [37.4979, 127.0622], "서초구": [37.4766, 127.0118], "송파구": [37.5056, 127.1153],
+    "마포구": [37.5593, 126.9083], "용산구": [37.5314, 126.9801], "성동구": [37.5510, 127.0410],
+    "영등포구": [37.5223, 126.9101], "종로구": [37.5724, 126.9795], "강동구": [37.5501, 127.1470],
+    "노원구": [37.6525, 127.0750]
+}
+df_geo = pd.DataFrame([{"지역": k, "lat": v[0], "lon": v[1]} for k, v in geo_data.items()])
+df_total = pd.merge(df, df_geo, on="지역")
+
+# 셀렉트박스로 지역 선택
+selected_district = st.selectbox("상세히 분석할 구를 선택하세요:", df["지역"].tolist())
+
+# 지도 표시 (선택된 지역은 다르게 표시되거나 전체 분포 확인)
+st.map(df_total, latitude="lat", longitude="lon", size=20, zoom=10)
+
+# 선택된 지역 데이터 추출
+r = df_total[df_total["지역"] == selected_district].iloc[0]
+
+st.markdown("---")
+
+# --- 6. 가격 분석 및 최근 가격 변화 그래프 ---
+st.subheader(f"📈 {selected_district} 가격 동향 및 추이 분석")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write(f"#### 💰 현재 시세 변동 현황")
+    st.metric(label="평균 매매가", value=f"{r.평균매매가} 억 원")
+    st.metric(label="평균 전세가", value=f"{r.평균전세가} 억 원", delta=f"전세가율 {round((r.평균전세가/r.평균매매가)*100, 1)}%")
+
+with col2:
+    st.write("#### 📉 최근 5개년 매매/전세 가격 추이 (가상)")
+    # 최근 5개년 추이 가상 생성
+    years = [f"{y}년" for y in range(2022, 2027)]
+    # 지역별 가격대에 맞게 트렌드 반영 (최근 상승/하락 변동성 부여)
+    base_m = r.평균매매가
+    base_j = r.평균전세가
+    
+    m_trend = [base_m*0.9, base_m*0.85, base_m*0.92, base_m*0.97, base_m]
+    j_trend = [base_j*0.88, base_j*0.82, base_j*0.87, base_j*0.93, base_j]
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=years, y=m_trend, mode='lines+markers', name='평균 매매가', line=dict(color='firebrick', width=3)))
+    fig.add_trace(go.Scatter(x=years, y=j_trend, mode='lines+markers', name='평균 전세가', line=dict(color='royalblue', width=3)))
+    fig.update_layout(margin=dict(l=20, r=20, t=20, b=20), height=250)
+    st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+
+# --- 7. 사람이 몰리는 이유 통합 분석 (인구, 교통, 인프라 등) ---
+st.subheader(f"🔍 {selected_district}에 사람이 몰리는 이유 (통합 분석)")
+
+col_a, col_b = st.columns(2)
+
+with col_a:
+    st.markdown(f"**👨‍👩‍👧‍👦 인구 증가율 추이**\n> {r.인구증가율}")
+    st.markdown(f"**🚇 교통 접근성**\n> {r.교통접근성}")
+    st.markdown(f"**🏢 일자리 접근성 (직주근접)**\n> {r.일자리접근성}")
+
+with col_b:
+    st.markdown(f"**🛒 생활 인프라**\n> {r.생활인프라}")
+    st.markdown(f"**🏗️ 신규 개발 계획**\n> {r.신규개발계획}")
+
+st.markdown("---")
+
+# --- 8. 인프라 방사형(Radar) 차트 및 레이더 분석 ---
+st.subheader(f"📊 {selected_district} 인프라 정량 평가")
+
+# 레이더 차트 그리기
+categories = ['안정성', '교육', '교통', '편의시설']
+values = [r.안정성, r.교육, r.교통, r.편의시설]
+
+fig_radar = go.Figure()
+fig_radar.add_trace(go.Scatterpolar(
+      r=values + [values[0]],
+      theta=categories + [categories[0]],
+      fill='toself',
+      name=selected_district
+))
+fig_radar.update_layout(
+  polar=dict(
+    radialaxis=dict(visible=True, range=[0, 10])
+  ),
+  showlegend=False,
+  height=300,
+  margin=dict(l=50, r=50, t=30, b=30)
+)
+
+c1, c2 = st.columns([1, 1])
+with c1:
+    st.plotly_chart(fig_radar, use_container_width=True)
+with c2:
+    st.write("#### 🛡️ 항목별 점수 요약")
+    st.write(f"- **안정성:** {r.안정성}점 / 10점")
+    st.write(f"- **교육 환경:** {r.교육}점 / 10점")
+    st.write(f"- **교통 편의:** {r.교통}점 / 10점")
+    st.write(f"- **편의시설:** {r.편의시설}점 / 10점")
+    st.info(f"💡 현재 당신의 선택 유형에 따른 이 지역의 **최종 맞춤 점수**는 **{r.맞춤점수}점**입니다.")
